@@ -889,6 +889,38 @@ body[data-theme="dark"] .latest-row{background:rgba(255,255,255,.035)}
   font-size:1rem;
 }
 
+
+
+/* === v23 KPI + mobile optimization === */
+.kpi-card{touch-action:manipulation;}
+.kpi-sub{max-width:80%;}
+.chart-wrap canvas{max-width:100%!important;}
+@media(max-width:900px){
+  .top-grid.second-row{grid-template-columns:1fr!important;}
+  .latest-card{order:1;}
+  .overall-card{order:2;}
+}
+@media(max-width:720px){
+  .chart-hint{font-size:.72rem;line-height:1.35;}
+  .latest-card .chart-wrap{height:210px!important;}
+  .overall-card .chart-wrap{height:190px!important;}
+  .drawer-body{padding-bottom:calc(1.25rem + env(safe-area-inset-bottom));}
+  .news-card h3{font-size:1.03rem;line-height:1.25;}
+  .latest-meta{font-size:.76rem;}
+}
+@media(max-width:420px){
+  .kpi-row{grid-template-columns:repeat(2,minmax(0,1fr))!important;}
+  .kpi-card{min-height:136px!important;border-radius:18px;}
+  .kpi-count{font-size:2rem!important;bottom:1.72rem!important;}
+  .kpi-label{font-size:1.14rem!important;}
+  .kpi-chip{font-size:.48rem!important;}
+  .kpi-sub{font-size:.68rem!important;}
+  .shell{padding:.7rem .58rem 1.15rem;}
+}
+@media(max-width:340px){
+  .kpi-row{grid-template-columns:1fr!important;}
+}
+
 </style>
 </head>
 <body data-theme="light">
@@ -6181,6 +6213,7 @@ function isDark(){ return document.body.dataset.theme === "dark"; }
 function catColor(cat){ return (isDark() ? DARK_CAT_COLORS : CAT_COLORS)[cat] || CAT_COLORS.ALL; }
 function riskPalette(){ return isDark() ? DARK_BASE_RISK_COLORS : BASE_RISK_COLORS; }
 function sourceUrl(url){ return /^https?:\/\//i.test(url || "") ? url : "https://" + url; }
+function domainFromUrl(url){ try{return new URL(sourceUrl(url)).hostname.replace(/^www\./,"");}catch(e){return "";} }
 function escAttr(value){ return String(value ?? "").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
 function escapeHtml(value){
@@ -6293,10 +6326,50 @@ function applyPortalCaptions(root=document){
 
 function newsTitle(s){ return titleFromAnyFields({ ...s, source_url:s.url, raw_title:s.news_title || s.inferred_title }, "source_url"); }
 function deathMin(s){ return Number(s.reported_deaths_min ?? s.case_count_reported ?? 0) || 0; }
-function uniqueSources(cat){ return SOURCES.filter(s => cat === "ALL" || s.exam_category === cat); }
+function latestYear(r){
+  const direct = Number(r.year || 0);
+  if(direct) return direct;
+  const m = String(r.incident_or_publication_date || "").match(/\d{4}/);
+  return m ? Number(m[0]) : 2026;
+}
+function latestAsSourceRows(cat="ALL"){
+  return latest2026VisibleRows()
+    .filter(r => {
+      const group = latest2026Group(r);
+      return (cat === "ALL" || group === cat) && (group === "SSC" || group === "HSC");
+    })
+    .map((r, i) => ({
+      id:`LATEST-${r.record_id || i}`,
+      source_type:"latest2026",
+      latest_record_id:String(r.record_id || i),
+      exam_category:latest2026Group(r),
+      source_no:r.record_id || "2026 latest",
+      url:r.primary_source_url || "",
+      outlet:r.primary_source_name || "Source",
+      domain:domainFromUrl(r.primary_source_url || ""),
+      inferred_title:latestTitle(r),
+      news_title:latestTitle(r),
+      inferred_year:latestYear(r),
+      risk_period:"2026 Latest News",
+      period_raw:r.record_category || "2026 latest news",
+      reported_deaths_min:Number(r.reported_deaths_min || 0) || 0,
+      reported_deaths_max:Number(r.reported_deaths_max || r.reported_deaths_min || 0) || 0,
+      case_count_reported:Number(r.reported_deaths_min || 0) || 0,
+      verification_status:r.source_confidence || "",
+      include_in_main_count:r.include_in_main_academic_pressure_death_count || "",
+      notes:r.excluded_or_context_note || r.data_warning || "",
+      safe_summary:r.safe_summary || "",
+      language:""
+    }));
+}
+function uniqueSources(cat){
+  const base = SOURCES.filter(s => cat === "ALL" || s.exam_category === cat);
+  if(cat === "SSC" || cat === "HSC" || cat === "ALL") return base.concat(latestAsSourceRows(cat));
+  return base;
+}
 function uniqueCount(cat){ return uniqueSources(cat).length; }
 function sourceYears(rows){ return [...new Set(rows.map(s => Number(s.inferred_year)).filter(Boolean))].sort((a,b)=>b-a); }
-function filterRowsByYear(rows, year){ return year === "ALL" ? rows : rows.filter(s => String(s.inferred_year) === String(year)); }
+function filterRowsByYear(rows, year){ return year === "ALL" ? rows : rows.filter(s => String(Number(s.inferred_year || 0)) === String(year)); }
 function sumDeaths(rows){ return rows.reduce((sum,s)=>sum + deathMin(s), 0); }
 function riskLabels(){ return [...new Set(SOURCES.map(s=>s.risk_period).filter(Boolean))]; }
 function riskColorAt(i){ const p = riskPalette(); return p[i % p.length]; }
@@ -6354,7 +6427,7 @@ function renderKpis(){
         <div class="kpi-chip">News</div>
       </div>
       <div class="kpi-count">${uniqueCount(cat)}</div>
-      <div class="kpi-sub">unique records</div>`;
+      <div class="kpi-sub">linked records</div>`;
     grid.appendChild(card);
   });
 }
@@ -6423,7 +6496,7 @@ function renderCharts(){
             const group = groups[ctx.dataIndex];
             const rows = group === "OVERALL_2026" ? child2026Rows() : latest2026Rows(group);
             const deaths = group === "OVERALL_2026" ? sumChild2026Deaths(rows) : sumLatestDeaths(rows);
-            return ` ${rows.length} records · ${deaths.toLocaleString()} reported_deaths_min`;
+            return ` ${rows.length} records · ${deaths.toLocaleString()} reported deaths`;
           }}}
         },
         scales:{
@@ -6704,7 +6777,7 @@ function toggleCart(key){ const items=getCart(); const next=items.includes(key)?
 function updateCartCounter(){ const el=document.getElementById("cartCount"); if(el) el.textContent=getCart().length; }
 function updateCartButtons(){ document.querySelectorAll("[data-cart-key]").forEach(btn=>{ const key=btn.getAttribute("data-cart-key"); btn.textContent=inCart(key)?"Remove cart":"Add cart"; }); }
 function getCartRecords(){
-  return getCart().map(key=>{ const [type,id]=key.split(":"); if(type==="source"){ const s=SOURCES.find(x=>x.id===id); if(!s)return null; return {key,type,id:s.id,category:s.exam_category,title:newsTitle(s),year:s.inferred_year,outlet:s.outlet,url:sourceUrl(s.url),risk:s.risk_period,reported_deaths_min:deathMin(s),status:s.verification_status,notes:s.notes||""}; } if(type==="latest"){ const r=latest2026VisibleRows().find(x=>String(x.record_id)===String(id)); if(!r)return null; return {key,type,id:r.record_id,category:latest2026Group(r),title:latestTitle(r),year:r.year,outlet:r.primary_source_name,url:sourceUrl(r.primary_source_url||""),risk:"2026 latest",reported_deaths_min:Number(r.reported_deaths_min||0),status:r.source_confidence||"",notes:r.safe_summary||""}; } if(type==="child2026"){ const r=child2026Rows().find(x=>String(x.source_row_id||x.incident_group_id)===String(id)); if(!r)return null; return {key,type,id:r.source_row_id||r.incident_group_id,category:"Overall 2026",title:child2026Title(r),year:r.incident_year,outlet:r.source_domain||"",url:sourceUrl(r.source_url||""),risk:r.reported_context_category||"2026 child/student",reported_deaths_min:Number(r.reported_deaths_min_group||0),status:r.confidence_level_group||"",notes:r.safe_summary_group||""}; } if(type==="overall"){ const r=OVERALL_STATS.find(x=>String(x.year)===String(id)); if(!r)return null; return {key,type,id:String(r.year),category:"Overall",title:r.title,year:r.year,outlet:r.outlet,url:sourceUrl(r.url),risk:"Annual aggregate",reported_deaths_min:r.count,status:"Annual source",notes:""}; } return null; }).filter(Boolean);
+  return getCart().map(key=>{ const [type,id]=key.split(":"); if(type==="source"){ const s=uniqueSources("ALL").find(x=>String(x.id)===String(id)); if(!s)return null; return {key,type,id:s.id,category:s.exam_category,title:newsTitle(s),year:s.inferred_year,outlet:s.outlet,url:sourceUrl(s.url),risk:s.risk_period,reported_deaths_min:deathMin(s),status:s.verification_status,notes:s.notes||""}; } if(type==="latest"){ const r=latest2026VisibleRows().find(x=>String(x.record_id)===String(id)); if(!r)return null; return {key,type,id:r.record_id,category:latest2026Group(r),title:latestTitle(r),year:r.year,outlet:r.primary_source_name,url:sourceUrl(r.primary_source_url||""),risk:"2026 latest",reported_deaths_min:Number(r.reported_deaths_min||0),status:r.source_confidence||"",notes:r.safe_summary||""}; } if(type==="child2026"){ const r=child2026Rows().find(x=>String(x.source_row_id||x.incident_group_id)===String(id)); if(!r)return null; return {key,type,id:r.source_row_id||r.incident_group_id,category:"Overall 2026",title:child2026Title(r),year:r.incident_year,outlet:r.source_domain||"",url:sourceUrl(r.source_url||""),risk:r.reported_context_category||"2026 child/student",reported_deaths_min:Number(r.reported_deaths_min_group||0),status:r.confidence_level_group||"",notes:r.safe_summary_group||""}; } if(type==="overall"){ const r=OVERALL_STATS.find(x=>String(x.year)===String(id)); if(!r)return null; return {key,type,id:String(r.year),category:"Overall",title:r.title,year:r.year,outlet:r.outlet,url:sourceUrl(r.url),risk:"Annual aggregate",reported_deaths_min:r.count,status:"Annual source",notes:""}; } return null; }).filter(Boolean);
 }
 function downloadCart(format="csv"){
   const rows=getCartRecords(); if(!rows.length){alert("Cart is empty.");return;} if(format==="json"){downloadBlob(JSON.stringify(rows,null,2),"news-cart.json","application/json");return;}
@@ -6720,8 +6793,8 @@ function renderYearFilter(rows,selected="ALL"){
   const years=sourceYears(rows); const opts=['<option value="ALL">All years</option>'].concat(years.map(y=>`<option value="${y}" ${String(y)===String(selected)?"selected":""}>${y}</option>`)).join("");
   return `<div class="year-filter-box"><label for="yearFilter">Filter year</label><select class="year-select" id="yearFilter" onchange="applyDrawerYearFilter(this.value)">${opts}</select></div><div id="sourceList"></div>`;
 }
-function applyDrawerYearFilter(year){ currentDrawerYear=year||"ALL"; const rows=filterRowsByYear(currentDrawerRows,currentDrawerYear); document.getElementById("drawerCount").textContent=`${rows.length} visible record(s) · ${currentDrawerYear==="ALL"?"all years":currentDrawerYear}`; document.getElementById("sourceList").innerHTML=rows.length?rows.map(renderSourceCard).join(""):emptyState(); updateCartButtons(); }
-function openCategoryDrawer(cat){ currentDrawer={kind:"cat",value:cat}; currentDrawerRows=uniqueSources(cat); currentDrawerYear="ALL"; document.getElementById("drawerKicker").textContent=`${cat} sources`; document.getElementById("drawerTitle").textContent=`${cat} linked records`; document.getElementById("drawerCount").textContent=`${currentDrawerRows.length} visible record(s) · all years`; setDrawerActions(); document.getElementById("drawerBody").innerHTML=renderYearFilter(currentDrawerRows,currentDrawerYear); applyDrawerYearFilter("ALL"); showDrawer(); }
+function applyDrawerYearFilter(year){ currentDrawerYear=year||"ALL"; const rows=filterRowsByYear(currentDrawerRows,currentDrawerYear); document.getElementById("drawerCount").textContent=`${rows.length} linked record(s) · ${currentDrawerYear==="ALL"?"all years":currentDrawerYear}`; document.getElementById("sourceList").innerHTML=rows.length?rows.map(renderSourceCard).join(""):emptyState(); updateCartButtons(); setTimeout(()=>applyPortalCaptions(document.getElementById("drawerBody")),0); }
+function openCategoryDrawer(cat){ currentDrawer={kind:"cat",value:cat}; currentDrawerRows=uniqueSources(cat); currentDrawerYear="ALL"; document.getElementById("drawerKicker").textContent=`${cat} sources`; document.getElementById("drawerTitle").textContent=`${cat} linked records`; document.getElementById("drawerCount").textContent=`${currentDrawerRows.length} linked record(s) · all years`; setDrawerActions(); document.getElementById("drawerBody").innerHTML=renderYearFilter(currentDrawerRows,currentDrawerYear); applyDrawerYearFilter("ALL"); showDrawer(); }
 function openOverallDrawer(){ currentDrawer={kind:"overall",value:null}; currentDrawerRows=[]; document.getElementById("drawerKicker").textContent="Overall annual sources"; document.getElementById("drawerTitle").textContent="Overall aggregate records"; document.getElementById("drawerCount").textContent=`${OVERALL_STATS.length} annual linked record(s) · 2021-2025`; setDrawerActions(); document.getElementById("drawerBody").innerHTML=OVERALL_STATS.map(renderOverallCard).join(""); showDrawer(); updateCartButtons(); }
 function openCartDrawer(){ currentDrawer={kind:"cart",value:null}; const rows=getCartRecords(); document.getElementById("drawerKicker").textContent="Private browser cart"; document.getElementById("drawerTitle").textContent="Saved news records"; document.getElementById("drawerCount").textContent=`${rows.length} saved item(s) · stored only in this visitor's browser`; setDrawerActions(`<button class="drawer-tool" onclick="downloadCart('csv')">Download CSV</button><button class="drawer-tool" onclick="downloadCart('json')">Download JSON</button><button class="drawer-tool" onclick="clearCart()">Clear</button>`); document.getElementById("drawerBody").innerHTML=rows.length?rows.map(renderCartCard).join(""):`<div class="empty-state">Cart is empty. Open a category, add records, then download them as CSV or JSON.<div class="cart-empty-actions"><button class="action-btn primary" onclick="openCategoryDrawer('SSC')">Browse records</button></div></div>`; showDrawer(); updateCartButtons(); }
 function rerenderOpenDrawer(){ if(!document.getElementById("drawer").classList.contains("open"))return; if(currentDrawer.kind==="cat")openCategoryDrawer(currentDrawer.value); else if(currentDrawer.kind==="overall")openOverallDrawer(); else if(currentDrawer.kind==="cart")openCartDrawer(); else if(currentDrawer.kind==="latest2026")openLatest2026Drawer(currentDrawer.value); }
@@ -6733,7 +6806,7 @@ function renderSourceCard(s){
   const title = newsTitle(s);
   return `<article class="news-card" style="--accent:${color}">
     <h3 data-title-url="${escAttr(link)}" data-fallback-title="${escAttr(title)}">${escapeHtml(title)}</h3>
-    <div class="latest-meta">${s.outlet || "Source"} · ${s.inferred_year || "N/A"}</div>
+    <div class="latest-meta">${s.outlet || "Source"} · ${s.inferred_year || "N/A"}${s.source_type === "latest2026" ? " · 2026 Latest News" : ""}</div>
     <div class="actions">
       <button class="action-btn" type="button" data-cart-key="${key}" onclick="toggleCart('${key}')">${inCart(key)?"Remove cart":"Add cart"}</button>
       <a class="action-btn primary" href="${escAttr(link)}" target="_blank" rel="noopener noreferrer">Open source</a>
